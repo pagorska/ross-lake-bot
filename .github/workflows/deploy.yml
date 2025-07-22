@@ -1,0 +1,51 @@
+name: Deploy Lambda with CDK
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1  # Change to your preferred region
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '22'  
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: "startsWith(github.event.head_commit.message, 'deploy:')"
+
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install AWS CDK
+      run: npm install -g aws-cdk
+
+    - name: Install Python dependencies
+      run: pip install -r requirements.txt
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Bootstrap CDK (if needed)
+      run: cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || true
+
+    - name: CDK Deploy
+      run: cdk deploy --require-approval never --verbose
