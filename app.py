@@ -3,11 +3,11 @@ import os
 
 import aws_cdk as cdk
 
-from lambda_cdk.lambda_deployment_stack import LambdaDeploymentStack
+from lambda_cdk.lambda_deployment_stack import RossLakeDeploymentStack
 
 # Don't update - leave as is until you know what you are doing
 app = cdk.App()
-LambdaDeploymentStack(app, "LambdaDeploymentStack",
+RossLakeDeploymentStack(app, "RossLakeDeploymentStack",
     # If you don't specify 'env', this stack will be environment-agnostic.
     # Account/Region-dependent features and context lookups will not work,
     # but a single synthesized template can be deployed anywhere.

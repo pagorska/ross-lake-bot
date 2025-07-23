@@ -1,172 +1,156 @@
-# AWS Lambda CDK Template
 
-This repository provides a sample Dockerized Python Lambda function with EventBridge scheduling (set on a one hour basis), GitHub Actions for automated deployment on push to main, and instructions for setting up OIDC authentication for GitHub Actions with optional DynamoDB setup. This is a hobby project meant for use in a single AWS environment.
 
-## What's Included
+# Discord Webhook Notifications with AWS Lambda
 
-- **Dockerized Python Lambda Function**: Containerized Lambda function with sample API call
-- **EventBridge Scheduling**: Automated Lambda execution every hour
-- **AWS CDK Infrastructure**: Infrastructure as Code using AWS CDK
-- **GitHub Actions CI/CD**: Automated deployment pipeline - start your commit with 'deploy:'
-- **OIDC Authentication**: Secure GitHub-to-AWS authentication setup
-- **Optional DynamoDB**: Database configuration examples
+Using my [AWS Lambda CDK Template](https://github.com/pagorska/lambda-cdk), I'll set up Discord webhooks to post through my lambda. 
+Discord webhooks are perfect for hobby projects. They're free, take very little time to set up, and very few requirements compared to sending SMS and email alerts. They're great for alerting for anything related to your projects or any automated alerts. In this example, I'll be scraping availability from [Ross Lake Resort](https://www.rosslakeresort.com/stay), a resort in the North Cascades with a way too difficult process for booking, and sending a Discord message to a dedicated alerting channel when I find availability. You can replace this with any API or website you'd like to scrape.
+
+**Relevant Resources**
+* [Discord Developer Docs](https://discord.com/developers/docs/intro)
+* [AWS Lambda CDK Template](https://github.com/pagorska/lambda-cdk)
+* [AWS CDK Docs](https://docs.aws.amazon.com/cdk/v2/guide/home.html)
+* [PyPi DiscordWebhook](https://pypi.org/project/discord-webhook/)
+
+
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Setup Instructions](#setup-instructions)
+  - [1. Set Up Discord Webhook](#1-set-up-discord-webhook)
+  - [2. Configure Environment Variables](#2-configure-environment-variables)
+  - [3. Add Data](#3-add-data)
+  - [4. Post with Webhook](#4-post-with-webhook)
+  - [5. Deploy with CDK](#5-deploy-with-cdk)
+- [Summary Basic Example](#summary-basic-example)
+
 
 ## Prerequisites 
 
-* AWS Account
-* [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) & [completed setup](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html)
-* AWS CDK - `npm install -g aws-cdk`
-* Docker
-* Python 3.7+
+- AWS Account
+- [AWS CDK](https://docs.aws.amazon.com/cdk/latest/guide/getting_started.html) installed
+- Discord Account & Server (I recommend creating a dedicated alerts server)
+- Python 3.9+ 
 
-## Quick Start
+## Setup Instructions
 
-### 1. Environment Setup
+### 1. Set Up Discord Webhook
+
+Create a webhook in your Discord server to receive availability alerts. You must have mod level or higher permissions in this server, and I recommend creating a server specifically for alerting and logs from lambdas. 
+
+**Note:** This must be done on Discord's desktop app or website (not mobile).
+
+1. Navigate to your desired channel (or create `#availability-alerts`)
+2. Hover over the channel → ⚙️ **Edit Channel**
+3. Go to **Integrations** tab -> Webhooks
+4. Click **Create Webhook**
+5. Name your webhook 
+6. **Copy the webhook URL** - you'll need this next
+
+![Setup Example](https://github-readmes.s3.us-east-1.amazonaws.com/discord-example/webhook%20create.png)
+
+### 2. Configure Environment Variables
+
+Your webhook URL must be kept secure since it allows posting to your Discord channel. I would not recommend posting this publicly to your github repo. Keep the URL in a .env when working locally, and within your Github repository's secrets if deploying via Github Actions, or use your preferred secrets manager.
+
+**For Local Development:**
+Create a `.env` file in your lambda folder:
+```env
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-webhook-url-here
+```
+Ensure `.env` is in your `.gitignore`.
+
+**For Deployments via Github Actions:**
+1. Go to your repository → Settings → Secrets and variables → Actions
+2. Click "New repository secret"
+3. Name: `DISCORD_WEBHOOK_URL`
+4. Value: Your webhook URL
+
+![Github Repository Secrets](https://github-readmes.s3.us-east-1.amazonaws.com/discord-example/webhook%20url.png)
+
+### 3. Add Data 
+
+You're able to post any text to the webhook. If you'd like to just test webhook functionality for now, skip this step and post anything to the Webhook. If you're pulling data from a particular API, I'd recommend adding a testing step to confirm if it works when calling from AWS as well as locally.
+
+I use `requests` and `BeautifulSoup` to pull the information from the table on the site, and because I don't know what it looks like if there's actually availability, I also will post a message if I can't find the components I was using for availability checking before, and if the word 'unavailable' shows up more or less than 4 times.
+
+![Ross Lake Table](https://github-readmes.s3.us-east-1.amazonaws.com/discord-example/ross%20lake%20table.png)
+
+```python
+for i, container_id in enumerate(availability_containers):
+    container = soup.find('div', id=container_id)
+    if container:
+        status_text = container.get_text(strip=True)
+        if status_text.lower() != 'unavailable':
+            messageBody += f"{cabin_names[i]}: {status_text}\n"
+    else:
+        messageBody += f"{cabin_names[i]}: Not found. Webpage structure may have changed\n"
+
+# Sanity check - has the number of times 'Unavailable' been found changed?
+body = soup.find('body')
+if body:
+    body_text = body.get_text()
+    word_count = body_text.lower().count('unavailable')
+    if word_count != 4:
+        messageBody += f"Unknown availability: Expected 4 'Unavailable' mentions, found {word_count}.\n"
+```
+
+### 4. Post with Webhook
+
+Once you have some message to post to your channel, create a `DiscordWebhook` object with your previously saved URL, add a message title and description (be sure to format it with new lines and such for cleanliness), add the embed to the webhook, and execute. At this point, if you're testing locally or executing your lambda, a message will fire.
+
+```python
+from dotenv import load_dotenv
+from discord_webhook import DiscordWebhook, DiscordEmbed
+load_dotenv()  
+
+discord_webhook_url = os.getenv('DISCORD_WEBHOOK_URL')
+webhook = DiscordWebhook(url=discord_webhook_url)
+
+embed = DiscordEmbed(
+    title="Possible Cabin Availability",
+    description=messageBody)
+
+webhook.add_embed(embed)
+webhook.execute()
+```
+I configure the messages to only send if there is some of the availability I'm seeking, but for this example, I posted a few messages to test:
+
+![Messages](https://github-readmes.s3.us-east-1.amazonaws.com/discord-example/example%20message.png)
+
+### 5. Deploy with CDK
+
+**Before deploying,** confirm the interval you'll be running your lambda on, and be mindful of not overloading the site or API you're using. If a site only updates every hour, there's no reason to scrape every 2 minutes, as it is wasteful for both parties. In my example, I'm running the scrape lambda every 30 minutes. If I discover that availability is only ever posted, for example, on weekday mornings, then I'd adjust my schedule to only run within that timeframe on a shorter schedule.
+
+Deploy to AWS Lambda using your CDK template:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
 pip install -r requirements.txt
-```
 
-> **Note**: If you run into venv issues, just run `rm -rf .venv` and start over.
+cdk bootstrap # once per account/region
 
-### 2. Deploy to AWS
-
-Ensure Docker is running (`docker ps` to verify), then:
-
-```bash
-cdk bootstrap
-```
-
-> **Note**: `cdk bootstrap` is only needed once per AWS account/region.
-
-```bash
 cdk synth
 cdk deploy
 ```
-At this point, you'll be able to verify and observe the creation of the resources in the AWS Console. 
+Or, push to main with a commit message beginning with **deploy:** [if you've set up OIDC](https://github.com/pagorska/lambda-cdk?tab=readme-ov-file#github-actions-setup-optional). If you're deploying multiple different projects with CDK, make sure to use different stack names. 
 
-Your main CDK stack configuration is in `lambda_cdk/lambda_deployment_stack.py`.
+## Summary Basic Example
 
-If you're setting up a DynamoDB table (optional), this file includes an example configuration for that as well.
+Add `discord-webhook` to your `requirements.txt` or `pip install discord-webhook`.
 
-> ⚠️ You're responsible for your own AWS charges. This is a hobby setup — keep track of what resources are live, especially if you enable periodic/scheduled jobs or create a DynamoDB table.
+```python
+from discord_webhook import DiscordWebhook
 
-### 3. Customize Your Lambda
+webhook = DiscordWebhook(url="your-webhook-url")
+webhook.content = "Simple text message"
+webhook.execute()
 
-Update the Lambda function in `lambdas/sample-lambda/app.py` and its dependencies in `lambdas/sample-lambda/requirements.txt`. The current implementation calls an external API and returns part of its response.
+embed = DiscordEmbed(
+    title="title",
+    description="body")
 
-To add additional dependencies, for example other CDK libraries, just add them to your `setup.py` file and rerun the `pip install -r requirements.txt` command.
-
-Update the lambda in `lambdas/sample-lambda/app.py` and its `lambdas/sample-lambda/requirements.txt` file to actually make changes to your lambda. At present, the lambda calls an API an returns part of its response. 
-### 4. Optional: Adding More Lambdas
-
-Feel free to use only one lambda per folder, or duplicate the sample lambda and its setup to add additonal lambdas. To not overcomplicate things, copy over the sample lambda to a new folder:
-
-```bash
-cp -r lambdas/sample-lambda lambdas/second-lambda
+webhook.add_embed(embed)
+webhook.execute()
 ```
-
-Update `lambda_cdk/lambda_deployment_stack.py` to include the new lambda.
-
-### 5. Optional: Clean Up
-
-This repo creates a lambda that runs on a regular schedule, and optional instructions for adding a table. While lambdas are mostly cheap, tables can be more expensive, and you may want to shut down projects that are not in use. 
-
-**Before destroying:**
-- Check CloudWatch logs for any important data or debugging information
-- Export any DynamoDB data you want to keep
-- Note down any configuration settings you might want to recreate later
-
-To destroy the stack:
-```bash
-cdk destroy
-```
-> ⚠️ If you created a table in the stack, the table and its data will be destroyed with this action. To preserve data, consider managing the table outside of the CDK stack, or export/import data before destroying. Alternatively, add in a removal policy when creating your table (`RETAIN` or `SNAPSHOT`).
-
-**Post-cleanup verification:**
-- Check the AWS Console to ensure resources were deleted
-- Verify no unexpected charges on your AWS bill
-- Consider cleaning up ECR repositories if no longer needed
----
-## Project Structure
-
-```
-├── lambda_cdk/
-│   ├── lambda_deployment_stack.py # Main CDK stack
-│   └── __init__.py
-├── lambdas/
-│   └── sample-lambda/
-│       ├── app.py                # Lambda function code
-│       ├── requirements.txt      # Lambda dependencies
-│       └── Dockerfile           # Container configuration
-├── tests/
-├── .github/workflows/deploy.yml  # GitHub Actions workflow (if exists)
-├── app.py                       # CDK app entry point
-├── cdk.json                     # CDK configuration
-├── requirements.txt             # CDK dependencies
-└── source.bat                   # Windows activation script
-```
----
-## Useful CDK Commands
-
-* `cdk ls` - list stacks in your app
-* `cdk synth` - emit synthesized CloudFormation template
-* `cdk deploy` - deploy the current stack
-* `cdk diff` - compare deployed stack with local changes
-* `cdk docs` - open CDK documentation
-
----
-## Local Lambda Testing via Docker
-
-Builds and run your Lambda container locally. This is mostly useful for local testing.
-Update the name (`hello-world-lambda`) and path (`sample-lambda/`) as needed.
-
-```bash
-docker build -t hello-world-lambda sample-lambda/
-docker run -p 9000:8080 hello-world-lambda
-```
-
-In a second terminal, invoke the container with:
-
-```bash
-curl -XPOST "http://localhost:9000/2015-03-31/functions/function/invocations" -d '{}'
-```
-
-Or test with a scheduled event payload:
-
-```bash
-curl -XPOST "http://localhost:9000/2015-03-31/functions/function/invocations" \
-  -d '{"source": "aws.events", "detail-type": "Scheduled Event"}'
-```
----
-## GitHub Actions Setup (Optional)
-This template uses [OpenID Connect (OIDC)](https://docs.github.com/en/actions/concepts/security/openid-connect) to grant Github depoyment access. If you prefer to deploy locally with `cdk deploy`, you can delete `.github/workflows/deploy.yml`.
-### OIDC Configuration Steps
-1. **Once Per Repo:** After cloning, add your AWS Account ID to Settings > Secrets and variables > Actions > Repository secrets, named `AWS_ACCOUNT_ID`. 
-2. **Once Per AWS Account:** Go to the AWS Console > IAM, and set up an identity provider. Follow the Github instructions for [Adding the identity provider to AWS](https://docs.github.com/en/actions/how-tos/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services#adding-the-identity-provider-to-aws). Select OpenID Connect for the provider type, `https://token.actions.githubusercontent.com/` for the provider URL, and `sts.amazonaws.com` for the audience.
-3. **Once Per AWS Account:** Still under IAM, navigate to Roles and create a new role. Follow the AWS instructions for [Creating a role for OIDC](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html#idp_oidc_Create). When creating a new role, select 'Web identity' for the trusted entity type,  `https://token.actions.githubusercontent.com/` for the identity provider from the dropdown, and `sts.amazonaws.com` for the audience from the dropdown. Use your Github username for the organization (or the organization where you clone your repository). For personal development, add the AdministratorAccess policy. Name the policy `GitHubActionsRole`, which is what is used in the `deploy.yml`.Your policy should look something like this:
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Principal": {
-                "Federated": "arn:aws:iam::{AWS-ACCOUNT-ID}:oidc-provider/token.actions.githubusercontent.com"
-            },
-            "Action": "sts:AssumeRoleWithWebIdentity",
-            "Condition": {
-                "StringEquals": {
-                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-                },
-                "StringLike": {
-                    "token.actions.githubusercontent.com:sub": "repo:pagorska/*"
-                }
-            }
-        }
-    ]
-}
-```
-Once configured, pushes to the main branch **which begin with 'deploy:'** will automatically deploy to AWS. Consider the permissions to your repository with these or any Github actions on push to main.
