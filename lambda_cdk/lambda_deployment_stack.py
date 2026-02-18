@@ -57,7 +57,7 @@ class RossLakeDeploymentStack(Stack):
 
         ross_lake_bot = create_lambda(self, 'RossLakeLambda', code_path='lambdas/ross_lake_bot', env_vars=['DISCORD_WEBHOOK_URL'])
 
-        add_schedule(self, "RossLakeBotSchedule", ross_lake_bot, minutely(30), "Trigger Lambda every 30 minutes")
+        # add_schedule(self, "RossLakeBotSchedule", ross_lake_bot, minutely(30), "Trigger Lambda every 30 minutes")
 
         CfnOutput(self, 
                   'RossLakeBot', 
